@@ -92,6 +92,26 @@ app.add_middleware(
 # Routes
 # ---------------------------------------------------------------------------
 
+
+def _genai_error_code(exc: genai_errors.APIError) -> int | None:
+    """Return an HTTP-like error code from a GenAI SDK exception."""
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    return None
+
+
+def _map_ai_error_status(exc: genai_errors.APIError) -> int:
+    return (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if _genai_error_code(exc) == 429
+        else status.HTTP_502_BAD_GATEWAY
+    )
+
 @app.get("/", tags=["Health"])
 def health_check():
     return {"status": "ok", "service": "AI Companion SAAS"}
@@ -169,11 +189,7 @@ def create_session(request: Request, body: CreateSessionRequest):
         )
     except genai_errors.ClientError as exc:
         sm.delete_session(session.session_id)
-        status_code = (
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if exc.status_code == 429
-            else status.HTTP_502_BAD_GATEWAY
-        )
+        status_code = _map_ai_error_status(exc)
         raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
     except Exception as exc:
         sm.delete_session(session.session_id)
@@ -239,11 +255,7 @@ def chat(session_id: str, body: ChatMessageRequest):
     try:
         reply = sm.send_message(session_id, body.message)
     except genai_errors.ClientError as exc:
-        status_code = (
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if exc.status_code == 429
-            else status.HTTP_502_BAD_GATEWAY
-        )
+        status_code = _map_ai_error_status(exc)
         raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
     except Exception as exc:
         raise HTTPException(

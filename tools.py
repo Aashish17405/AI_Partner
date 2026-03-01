@@ -16,6 +16,7 @@ live information (news, facts) in the same breath.
 
 from __future__ import annotations
 
+import os
 import urllib.parse
 import urllib.request
 import json
@@ -129,10 +130,18 @@ _location_decl = types.FunctionDeclaration(
 # Public: tool list to pass to GenerateContentConfig
 # ---------------------------------------------------------------------------
 
+GEMINI_ENABLE_GOOGLE_SEARCH = os.getenv("GEMINI_ENABLE_GOOGLE_SEARCH", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 AGENT_TOOLS: list[types.Tool] = [
-    types.Tool(google_search=types.GoogleSearch()),
     types.Tool(function_declarations=[_datetime_decl, _location_decl]),
 ]
+if GEMINI_ENABLE_GOOGLE_SEARCH:
+    AGENT_TOOLS.insert(0, types.Tool(google_search=types.GoogleSearch()))
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from google import genai
-from google.genai import types
+from google.genai import errors as genai_errors, types
 
 from partners import PARTNERS, get_system_prompt
 from tools import AGENT_TOOLS, dispatch_tool_call
@@ -30,7 +30,13 @@ from tools import AGENT_TOOLS, dispatch_tool_call
 # Constants
 # ---------------------------------------------------------------------------
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_ENABLE_TOOLS = os.getenv("GEMINI_ENABLE_TOOLS", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 SESSION_TTL = 60 * 60 * 24 * 7   # 7 days (seconds in Redis)
 
 
@@ -172,6 +178,45 @@ def get_session(session_id: str) -> Optional[SessionData]:
     return SessionData(data) if data else None
 
 
+def _extract_function_calls(response) -> list:
+    calls = []
+    for candidate in response.candidates or []:
+        content = getattr(candidate, "content", None)
+        if not content:
+            continue
+        for part in content.parts or []:
+            function_call = getattr(part, "function_call", None)
+            if function_call:
+                calls.append(function_call)
+    return calls
+
+
+def _extract_response_text(response) -> str:
+    text = getattr(response, "text", None)
+    if text:
+        return text
+    for candidate in response.candidates or []:
+        content = getattr(candidate, "content", None)
+        if not content:
+            continue
+        parts = content.parts or []
+        chunks = [part.text for part in parts if getattr(part, "text", None)]
+        if chunks:
+            return "".join(chunks).strip()
+    return ""
+
+
+def _tool_mode_unsupported(exc: genai_errors.ClientError) -> bool:
+    if getattr(exc, "code", None) != 400:
+        return False
+    message = (getattr(exc, "message", "") or str(exc)).lower()
+    return (
+        "tool use with function calling is unsupported by the model" in message
+        or ("function calling is unsupported" in message and "model" in message)
+        or ("tools are not supported" in message and "model" in message)
+    )
+
+
 def send_message(session_id: str, message: str) -> str:
     """
     Send a user message and return the AI partner reply.
@@ -210,42 +255,53 @@ def send_message(session_id: str, message: str) -> str:
     ]
 
     client = genai.Client(api_key=api_key)
-    chat = client.chats.create(
-        model=GEMINI_MODEL,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            tools=AGENT_TOOLS,
-        ),
-        history=genai_history,
-    )
+    tools_active = GEMINI_ENABLE_TOOLS
 
-    response = chat.send_message(message)
+    try:
+        config_kwargs = {"system_instruction": system_prompt}
+        if tools_active:
+            config_kwargs["tools"] = AGENT_TOOLS
+        chat = client.chats.create(
+            model=GEMINI_MODEL,
+            config=types.GenerateContentConfig(**config_kwargs),
+            history=genai_history,
+        )
+        response = chat.send_message(message)
+    except genai_errors.ClientError as exc:
+        if not tools_active or not _tool_mode_unsupported(exc):
+            raise
+        # Fallback for models that reject tool/function mode.
+        tools_active = False
+        chat = client.chats.create(
+            model=GEMINI_MODEL,
+            config=types.GenerateContentConfig(system_instruction=system_prompt),
+            history=genai_history,
+        )
+        response = chat.send_message(message)
 
     # Agentic tool-call loop (max 5 rounds)
-    for _ in range(5):
-        function_calls = [
-            part.function_call
-            for candidate in response.candidates
-            for part in candidate.content.parts
-            if hasattr(part, "function_call") and part.function_call
-        ]
-        if not function_calls:
-            break
+    if tools_active:
+        for _ in range(5):
+            function_calls = _extract_function_calls(response)
+            if not function_calls:
+                break
 
-        tool_result_parts = []
-        for fc in function_calls:
-            result = dispatch_tool_call(
-                fc.name,
-                dict(fc.args) if fc.args else {},
-                latitude=data.get("latitude"),
-                longitude=data.get("longitude"),
-            )
-            tool_result_parts.append(
-                types.Part.from_function_response(name=fc.name, response=result)
-            )
-        response = chat.send_message(tool_result_parts)
+            tool_result_parts = []
+            for fc in function_calls:
+                result = dispatch_tool_call(
+                    fc.name,
+                    dict(fc.args) if fc.args else {},
+                    latitude=data.get("latitude"),
+                    longitude=data.get("longitude"),
+                )
+                tool_result_parts.append(
+                    types.Part.from_function_response(name=fc.name, response=result)
+                )
+            response = chat.send_message(tool_result_parts)
 
-    reply_text = response.text
+    reply_text = _extract_response_text(response)
+    if not reply_text:
+        raise RuntimeError("Model returned an empty reply.")
 
     # Persist new turns + updated metadata
     data["history"].append({"role": "user",  "text": message})
