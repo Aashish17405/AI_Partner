@@ -137,7 +137,6 @@ def create_session(request: Request, body: CreateSessionRequest):
 
     try:
         session = sm.create_session(
-            api_key=GEMINI_API_KEY,
             partner_id=body.partner_id,
             user_name=body.user_name,
             nickname=body.nickname,
