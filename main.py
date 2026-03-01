@@ -71,10 +71,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow all origins during development; restrict in production.
+# CORS — explicit origins required when allow_credentials=True (wildcard is rejected by browsers).
+ALLOWED_ORIGINS = [
+    "https://ai-partner-ui.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
