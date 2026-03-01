@@ -17,6 +17,7 @@ from google import genai
 from google.genai import types
 
 from partners import PARTNERS, get_system_prompt
+from tools import AGENT_TOOLS, dispatch_tool_call
 
 
 # Gemini model name used across all sessions
@@ -39,6 +40,8 @@ class SessionData:
         personality_pref: Optional[str],
         genai_client,  # google.genai.Client — kept alive to prevent httpx closure
         chat,  # google.genai.chats.Chat
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ):
         self.session_id = session_id
         self.partner_id = partner_id
@@ -51,6 +54,8 @@ class SessionData:
         self.personality_pref = personality_pref
         self.genai_client = genai_client  # hold a strong reference so httpx stays open
         self.chat = chat
+        self.latitude = latitude
+        self.longitude = longitude
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.last_active = self.created_at
         self.message_count = 0
@@ -78,6 +83,8 @@ def create_session(
     user_name: str,
     nickname: Optional[str] = None,
     user_age: int = 22,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
     language: str = "English",
     interests: Optional[list[str]] = None,
     personality_pref: Optional[str] = None,
@@ -100,16 +107,12 @@ def create_session(
         personality_pref=personality_pref,
     )
 
-    # Google Search grounding tool — lets every agent look up live information
-    # (current events, facts, news) during the conversation when needed.
-    search_tool = types.Tool(google_search=types.GoogleSearch())
-
     client = genai.Client(api_key=api_key)
     chat = client.chats.create(
         model=GEMINI_MODEL,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
-            tools=[search_tool],
+            tools=AGENT_TOOLS,
         ),
     )
 
@@ -125,6 +128,8 @@ def create_session(
         personality_pref=personality_pref,
         genai_client=client,  # keep alive
         chat=chat,
+        latitude=latitude,
+        longitude=longitude,
     )
     _sessions[session_id] = session
     return session
@@ -135,12 +140,47 @@ def get_session(session_id: str) -> Optional[SessionData]:
 
 
 def send_message(session_id: str, message: str) -> str:
-    """Send a user message and return the AI partner's reply."""
+    """
+    Send a user message and return the AI partner's reply.
+
+    Implements an agentic loop: if the model decides to call one of the
+    custom tools (get_current_datetime, get_user_location) we execute the
+    function locally and feed the result back so the model can produce its
+    final natural-language reply.
+    """
     session = get_session(session_id)
     if not session:
         raise KeyError(f"Session '{session_id}' not found.")
 
     response = session.chat.send_message(message)
+
+    # Agentic tool-call loop (max 5 rounds to guard against infinite loops)
+    for _ in range(5):
+        function_calls = [
+            part.function_call
+            for candidate in response.candidates
+            for part in candidate.content.parts
+            if hasattr(part, "function_call") and part.function_call
+        ]
+        if not function_calls:
+            break
+
+        # Execute every requested tool and collect results
+        tool_result_parts = []
+        for fc in function_calls:
+            result = dispatch_tool_call(
+                fc.name,
+                dict(fc.args) if fc.args else {},
+                latitude=session.latitude,
+                longitude=session.longitude,
+            )
+            tool_result_parts.append(
+                types.Part.from_function_response(name=fc.name, response=result)
+            )
+
+        # Send all tool results back in one turn
+        response = session.chat.send_message(tool_result_parts)
+
     session.message_count += 1
     session.last_active = datetime.now(timezone.utc).isoformat()
     return response.text

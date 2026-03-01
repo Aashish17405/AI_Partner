@@ -1,7 +1,15 @@
 {
-  "buildCommand": "cd frontend && npm run build",
-  "outputDirectory": "frontend/.next",
-  "env": {
-    "NEXT_PUBLIC_API_BASE_URL": "@api_base_url"
-  }
+  "version": 1,
+  "builds": [
+    {
+      "src": "./main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "dest": "/"
+    }
+  ]
 }

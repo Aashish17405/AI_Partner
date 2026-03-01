@@ -21,7 +21,7 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 import session_manager as sm
@@ -114,12 +114,27 @@ def get_partner(partner_id: str):
     status_code=status.HTTP_201_CREATED,
     tags=["Sessions"],
 )
-def create_session(body: CreateSessionRequest):
+def create_session(request: Request, body: CreateSessionRequest):
     """
     Create a new personalised chat session.
     The system prompt is dynamically generated from the user's profile.
     Returns a session_id the frontend must store for subsequent calls.
+
+    Optional headers:
+      X-Latitude   — user's GPS latitude
+      X-Longitude  — user's GPS longitude
+    These are used by the agent's location tool during chat.
     """
+    # Extract optional location headers (sent by the frontend after geolocation consent)
+    def _parse_coord(header_value: str | None) -> float | None:
+        try:
+            return float(header_value) if header_value else None
+        except (ValueError, TypeError):
+            return None
+
+    latitude = _parse_coord(request.headers.get("X-Latitude"))
+    longitude = _parse_coord(request.headers.get("X-Longitude"))
+
     try:
         session = sm.create_session(
             api_key=GEMINI_API_KEY,
@@ -130,6 +145,8 @@ def create_session(body: CreateSessionRequest):
             language=body.language,
             interests=body.interests,
             personality_pref=body.personality_pref,
+            latitude=latitude,
+            longitude=longitude,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
