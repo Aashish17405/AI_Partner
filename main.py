@@ -107,9 +107,16 @@ def _genai_error_code(exc: genai_errors.APIError) -> int | None:
 
 def _map_ai_error_status(exc: genai_errors.APIError) -> int:
     return (
-        status.HTTP_503_SERVICE_UNAVAILABLE
+        status.HTTP_429_TOO_MANY_REQUESTS
         if _genai_error_code(exc) == 429
         else status.HTTP_502_BAD_GATEWAY
+    )
+
+
+def _fallback_opening(partner_name: str, user_name: str) -> str:
+    return (
+        f"Hey {user_name}, it's {partner_name}. I might be a bit delayed right now, "
+        "but I'm here with you. Tell me what's on your mind."
     )
 
 @app.get("/", tags=["Health"])
@@ -179,6 +186,7 @@ def create_session(request: Request, body: CreateSessionRequest):
 
     # Trigger the partner to send a natural opening message.
     # This internal prompt is never shown in chat history to the user.
+    opening = _fallback_opening(session.partner_name, session.user_name)
     try:
         opening = sm.send_message(
             session.session_id,
@@ -188,15 +196,9 @@ def create_session(request: Request, body: CreateSessionRequest):
             "the way you actually would. One to three sentences max.]",
         )
     except genai_errors.ClientError as exc:
-        sm.delete_session(session.session_id)
-        status_code = _map_ai_error_status(exc)
-        raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
+        print(f"[sessions.create] AI opening fallback used: {exc}")
     except Exception as exc:
-        sm.delete_session(session.session_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error during session start: {exc}",
-        )
+        print(f"[sessions.create] Unexpected opening fallback used: {exc}")
 
     return SessionCreatedResponse(
         session_id=session.session_id,

@@ -248,7 +248,7 @@ def send_message(session_id: str, message: str) -> str:
     genai_history = [
         types.Content(
             role=msg["role"],
-            parts=[types.Part.from_text(msg["text"])],
+            parts=[types.Part.from_text(text=msg["text"])],
         )
         for msg in data.get("history", [])
         if msg.get("text")
