@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from google.genai import errors as genai_errors
 
 import session_manager as sm
 from partners import PARTNERS
@@ -158,13 +159,28 @@ def create_session(request: Request, body: CreateSessionRequest):
 
     # Trigger the partner to send a natural opening message.
     # This internal prompt is never shown in chat history to the user.
-    opening = sm.send_message(
-        session.session_id,
-        "[SYSTEM: Start the conversation. Send your very first text to them — "
-        "casual, natural, like you just picked up your phone and decided to text. "
-        "Don't announce yourself. Don't be overly formal. Just... start talking, "
-        "the way you actually would. One to three sentences max.]",
-    )
+    try:
+        opening = sm.send_message(
+            session.session_id,
+            "[SYSTEM: Start the conversation. Send your very first text to them — "
+            "casual, natural, like you just picked up your phone and decided to text. "
+            "Don't announce yourself. Don't be overly formal. Just... start talking, "
+            "the way you actually would. One to three sentences max.]",
+        )
+    except genai_errors.ClientError as exc:
+        sm.delete_session(session.session_id)
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if exc.status_code == 429
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
+    except Exception as exc:
+        sm.delete_session(session.session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error during session start: {exc}",
+        )
 
     return SessionCreatedResponse(
         session_id=session.session_id,
@@ -222,6 +238,13 @@ def chat(session_id: str, body: ChatMessageRequest):
         )
     try:
         reply = sm.send_message(session_id, body.message)
+    except genai_errors.ClientError as exc:
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if exc.status_code == 429
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

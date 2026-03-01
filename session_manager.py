@@ -30,7 +30,7 @@ from tools import AGENT_TOOLS, dispatch_tool_call
 # Constants
 # ---------------------------------------------------------------------------
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 SESSION_TTL = 60 * 60 * 24 * 7   # 7 days (seconds in Redis)
 
 
