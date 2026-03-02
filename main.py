@@ -77,6 +77,7 @@ ALLOWED_ORIGINS = [
     "https://ai-partner-ui.vercel.app",
     "http://localhost:3000",
     "http://localhost:3001",
+    "https://ai-partner.dev-aashish.tech"
 ]
 
 app.add_middleware(
