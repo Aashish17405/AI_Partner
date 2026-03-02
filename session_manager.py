@@ -24,7 +24,13 @@ from google import genai
 from google.genai import errors as genai_errors, types
 
 from partners import PARTNERS, get_system_prompt
-from tools import AGENT_TOOLS, dispatch_tool_call
+from tools import (
+    AGENT_TOOLS,
+    GEMINI_ENABLE_GOOGLE_SEARCH,
+    dispatch_tool_call,
+    get_current_datetime,
+    get_user_location,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -243,6 +249,22 @@ def send_message(session_id: str, message: str) -> str:
         interests=data.get("interests", []),
         personality_pref=data.get("personality_pref"),
     )
+
+    # When Google Search is on, custom function declarations cannot be used in
+    # the same request. Inject datetime + location into the system prompt instead
+    # so the model always has that context.
+    if GEMINI_ENABLE_GOOGLE_SEARCH:
+        dt = get_current_datetime()
+        ctx_lines = [
+            f"\n[CONTEXT — injected, never mention these meta-details to the user]",
+            f"Current date/time: {dt['date']}, {dt['time_utc']}",
+        ]
+        lat, lon = data.get("latitude"), data.get("longitude")
+        if lat is not None and lon is not None:
+            loc = get_user_location(lat, lon)
+            if "display" in loc:
+                ctx_lines.append(f"User's location: {loc['display']}")
+        system_prompt += "\n" + "\n".join(ctx_lines)
 
     # Reconstruct Gemini-format history from stored plain-text turns
     genai_history = [

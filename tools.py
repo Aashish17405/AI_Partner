@@ -130,18 +130,23 @@ _location_decl = types.FunctionDeclaration(
 # Public: tool list to pass to GenerateContentConfig
 # ---------------------------------------------------------------------------
 
-GEMINI_ENABLE_GOOGLE_SEARCH = os.getenv("GEMINI_ENABLE_GOOGLE_SEARCH", "false").strip().lower() in {
+GEMINI_ENABLE_GOOGLE_SEARCH = os.getenv("GEMINI_ENABLE_GOOGLE_SEARCH", "true").strip().lower() in {
     "1",
     "true",
     "yes",
     "on",
 }
 
-AGENT_TOOLS: list[types.Tool] = [
-    types.Tool(function_declarations=[_datetime_decl, _location_decl]),
-]
+# Gemini does NOT allow Google Search grounding and custom function declarations
+# in the same request (raises 400 INVALID_ARGUMENT).
+# Strategy:
+#   • Google Search ON  → use only the search grounding tool (covers live events/news).
+#                           datetime & location are injected into the system prompt instead.
+#   • Google Search OFF → use only the custom function declarations.
 if GEMINI_ENABLE_GOOGLE_SEARCH:
-    AGENT_TOOLS.insert(0, types.Tool(google_search=types.GoogleSearch()))
+    AGENT_TOOLS: list[types.Tool] = [types.Tool(google_search=types.GoogleSearch())]
+else:
+    AGENT_TOOLS = [types.Tool(function_declarations=[_datetime_decl, _location_decl])]
 
 
 # ---------------------------------------------------------------------------
