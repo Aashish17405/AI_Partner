@@ -1,3 +1,3 @@
 """Compatibility shim for legacy imports."""
 
-from app.schemas import *  # noqa: F401,F403
+from app.core.llm import *  # noqa: F401,F403

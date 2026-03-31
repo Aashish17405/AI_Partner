@@ -1,6 +1,28 @@
-﻿google-genai>=1.65.0
+﻿# ── Core LangChain ──────────────────────────────────────────────────────────
+langchain-core>=0.3.0
+
+# ── LLM provider packages (install the one(s) you need) ─────────────────────
+# OpenAI  →  set LLM_PROVIDER=openai   (enabled)
+langchain-openai>=0.2.0
+
+# Groq  →  set LLM_PROVIDER=groq   (enabled)
+langchain-groq>=0.1.0
+
+# ── Optional search tools ────────────────────────────────────────────────────
+# Tavily provides highest quality web search results
+tavily-python>=0.1.0
+# DuckDuckGo is a free fallback if Tavily key is not set
+langchain-community>=0.3.0
+duckduckgo-search>=6.0.0
+
+# ── Web framework ────────────────────────────────────────────────────────────
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+
+# ── Utilities ────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 upstash-redis>=1.1.0
+sqlalchemy>=2.0.35
+psycopg[binary]>=3.2.3
+python-jose[cryptography]>=3.3.0
