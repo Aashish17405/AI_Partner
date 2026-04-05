@@ -193,7 +193,7 @@ def _get_history_records(db, session_id: str) -> list[ChatMessageRecord]:
     return list(db.execute(stmt).scalars().all())
 
 
-def send_message(session_id: str, message: str, user_id: str) -> str:
+def send_message(session_id: str, message: str, user_id: str, local_time: str | None = None) -> str:
     if is_database_online():
         with db_session() as db:
             session_record = db.execute(
@@ -208,7 +208,7 @@ def send_message(session_id: str, message: str, user_id: str) -> str:
             data = _serialize_session(session_record)
             history = _get_history_records(db, session_id)
             history_turns = [{"role": h.role, "text": h.text} for h in history]
-            reply = _generate_reply(data, history_turns, message)
+            reply = _generate_reply(data, history_turns, message, local_time)
 
             now = datetime.now(timezone.utc)
             db.add(ChatMessageRecord(session_id=session_id, role="user", text=message, created_at=now))
@@ -221,7 +221,7 @@ def send_message(session_id: str, message: str, user_id: str) -> str:
     data = _get_local_session(session_id, user_id)
     if not data:
         raise KeyError(f"Session '{session_id}' not found.")
-    reply = _generate_reply(data, data.get("history", []), message)
+    reply = _generate_reply(data, data.get("history", []), message, local_time)
     data["history"].append({"role": "user", "text": message})
     data["history"].append({"role": "model", "text": reply})
     data["message_count"] += 1
@@ -229,7 +229,7 @@ def send_message(session_id: str, message: str, user_id: str) -> str:
     return reply
 
 
-def _generate_reply(data: dict, history: list[dict], message: str) -> str:
+def _generate_reply(data: dict, history: list[dict], message: str, local_time: str | None = None) -> str:
     system_prompt = get_system_prompt(
         partner_id=data["partner_id"],
         user_name=data["user_name"],
@@ -241,10 +241,37 @@ def _generate_reply(data: dict, history: list[dict], message: str) -> str:
     )
 
     dt = get_current_datetime()
+    
+    time_str = dt['time_utc'] + " (UTC)"
+    if local_time:
+        time_str += f" | EXACT USER LOCAL TIME: {local_time}"
+
     ctx_lines = [
         "\n[CONTEXT - injected, never mention these meta-details to the user]",
-        f"Current date/time: {dt['date']}, {dt['time_utc']}",
+        f"Current date/time: {dt['date']}, {time_str}",
     ]
+    
+    # NEW: Fetch long-term memories for this user
+    memories_str = ""
+    if is_database_online():
+        from app.core.db import db_session, UserMemoryRecord
+        try:
+            with db_session() as db:
+                mem_records = db.execute(
+                    select(UserMemoryRecord)
+                    .where(UserMemoryRecord.user_id == data["user_id"])
+                    .order_by(UserMemoryRecord.importance.desc(), UserMemoryRecord.created_at.desc())
+                    .limit(20) # Scalability: only fetch most important/recent 20 facts
+                ).scalars().all()
+                if mem_records:
+                    memories_str = "\n".join([f"- {m.content}" for m in mem_records])
+        except Exception as e:
+            logger.error("Failed to fetch memories: %s", e)
+
+    if memories_str:
+        ctx_lines.append("\n[USER MEMORIES & PERSONAL FACTS - use these to personalize the chat]")
+        ctx_lines.append(memories_str)
+
     system_prompt += "\n" + "\n".join(ctx_lines)
 
     messages: list = [SystemMessage(content=system_prompt)]
@@ -261,6 +288,7 @@ def _generate_reply(data: dict, history: list[dict], message: str) -> str:
     tools = get_tools(
         latitude=data.get("latitude"),
         longitude=data.get("longitude"),
+        user_id=data["user_id"],
     )
     llm = get_llm()
     llm_with_tools = llm.bind_tools(tools)

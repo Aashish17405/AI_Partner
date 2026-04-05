@@ -89,6 +89,29 @@ class ChatMessageRecord(Base):
     session: Mapped[ChatSessionRecord] = relationship(back_populates="messages")
 
 
+class UserMemoryRecord(Base):
+    """Long-term compact facts/memories about a specific user."""
+    __tablename__ = "user_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    
+    # Simple categorization to help with filtering/scaling
+    memory_type: Mapped[str] = mapped_column(String(32), default="fact") 
+    
+    # The actual compact fact
+    content: Mapped[str] = mapped_column(Text)
+    
+    # 1-5 score, allowing us to prune low-importance memories if context gets too full
+    importance: Mapped[int] = mapped_column(Integer, default=1)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+
 @contextmanager
 def db_session() -> Iterator[Session]:
     if not SessionLocal or not _db_online:

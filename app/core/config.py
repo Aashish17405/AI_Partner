@@ -8,7 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+
+def _get_clean_env(key: str, default: str = "") -> str:
+    """Read env and strip quotes, spaces, and carriage returns."""
+    val = os.getenv(key, default) or default
+    return val.strip().strip("'\"").replace("\r", "").replace("\n", "")
+
+
+LLM_PROVIDER = _get_clean_env("LLM_PROVIDER", "openai").lower()
 LLM_PROVIDER_KEY_MAP = {
     "openai": "OPENAI_API_KEY",
     "groq": "GROQ_API_KEY",
@@ -16,16 +23,14 @@ LLM_PROVIDER_KEY_MAP = {
 
 REQUIRED_LLM_KEY = LLM_PROVIDER_KEY_MAP.get(LLM_PROVIDER, "OPENAI_API_KEY")
 
-SUPABASE_URL = os.getenv(
-    "SUPABASE_URL",
-    "https://cxzcjsnlisxrvwcviksg.supabase.co",
-).strip().rstrip("/")
-SUPABASE_JWT_AUDIENCE = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip()
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "").strip()
+SUPABASE_URL = _get_clean_env("SUPABASE_URL", "https://cxzcjsnlisxrvwcviksg.supabase.co").rstrip("/")
+SUPABASE_JWT_AUDIENCE = _get_clean_env("SUPABASE_JWT_AUDIENCE", "authenticated")
+SUPABASE_ANON_KEY = _get_clean_env("SUPABASE_ANON_KEY")
+SUPABASE_JWT_SECRET = _get_clean_env("SUPABASE_JWT_SECRET")
 
 DATABASE_URL = (
-    os.getenv("DATABASE_URL", "").strip()
-    or os.getenv("SUPABASE_DB_URL", "").strip()
+    _get_clean_env("DATABASE_URL")
+    or _get_clean_env("SUPABASE_DB_URL")
 )
 
 ALLOWED_ORIGINS = [

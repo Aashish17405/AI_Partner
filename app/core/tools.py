@@ -168,8 +168,8 @@ def _make_search_tool():
     tavily_key = os.getenv("TAVILY_API_KEY", "")
     if tavily_key:
         try:
-            from langchain_community.tools.tavily_search import TavilySearchResults  # type: ignore[import]
-            _backend = TavilySearchResults(max_results=4, tavily_api_key=tavily_key)
+            from langchain_tavily import TavilySearchResults  # type: ignore[import]
+            _backend = TavilySearchResults(max_results=4, api_key=tavily_key)
         except ImportError:
             pass
 
@@ -241,12 +241,57 @@ def _make_search_tool():
 
 
 # ---------------------------------------------------------------------------
+# Long-term memory tool — factory captures user_id for persistence
+# ---------------------------------------------------------------------------
+
+def _make_memory_tool(user_id: str):
+    """
+    Return a LangChain @tool bound to this specific user's database records.
+    The AI calls this to store facts that should be remembered across sessions.
+    """
+    from app.core.db import db_session, UserMemoryRecord
+
+    @tool
+    def save_memory(content: str, memory_type: str = "fact", importance: int = 3) -> str:
+        """
+        Saves a compact, meaningful fact or preference about the user to long-term memory.
+        Use this whenever the user shares something they'd expect you to remember in 
+        future sessions (e.g., location, workplace, specific life plans, birthdays, 
+        pet peeves, favorite shows, relationship status).
+        
+        IMPORTANCE SCALE:
+        1: Minor detail (current mood, what they ate for lunch)
+        3: Standard fact (city they live in, their job, a hobby)
+        5: Core identity (their birthday, their child's name, a major life trauma or win)
+        
+        Keep memories COMPACT (e.g., "User lives in Hyderabad", "User is free after 7pm tonight").
+        """
+        try:
+            with db_session() as db:
+                record = UserMemoryRecord(
+                    user_id=user_id,
+                    content=content.strip(),
+                    memory_type=memory_type,
+                    importance=importance
+                )
+                db.add(record)
+                db.commit()
+            return f"Memory successfully saved: '{content}'"
+        except Exception as e:
+            # Fallback for if DB is offline or other error
+            return f"Note: could not save memory to persistent store ({e}). Memory only available in this session."
+
+    return save_memory
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def get_tools(
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
+    user_id: Optional[str] = None,
 ) -> list:
     """
     Build and return the complete agent tool list for a chat session.
@@ -254,14 +299,16 @@ def get_tools(
     Always included:
       - datetime_tool
       - location_tool (pre-bound to session coordinates)
-
-    Conditionally included:
-      - web search tool (Tavily or DuckDuckGo) if ENABLE_WEB_SEARCH=true
+      - memory_tool (pre-bound to user_id for persistence)
     """
     tools = [
         datetime_tool,
         _make_location_tool(latitude, longitude),
     ]
+    
+    if user_id:
+        tools.append(_make_memory_tool(user_id))
+        
     search = _make_search_tool()
     if search:
         tools.append(search)

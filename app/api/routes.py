@@ -1,4 +1,4 @@
-﻿"""HTTP route definitions for the AI Companion API."""
+"""HTTP route definitions for the AI Companion API."""
 
 from __future__ import annotations
 
@@ -172,6 +172,7 @@ def get_history(
 
 @router.post("/sessions/{session_id}/chat", response_model=ChatResponse, tags=["Chat"])
 def chat(
+    request: Request,
     session_id: str,
     body: ChatMessageRequest,
     user: AuthUser = Depends(get_current_user),
@@ -183,7 +184,8 @@ def chat(
             detail=f"Session '{session_id}' not found.",
         )
     try:
-        reply = sm.send_message(session_id, body.message, user_id=user.id)
+        local_time_header = request.headers.get("X-Local-Time")
+        reply = sm.send_message(session_id, body.message, user_id=user.id, local_time=local_time_header)
     except Exception as exc:
         status_code = _map_ai_error_status(exc)
         raise HTTPException(status_code=status_code, detail=f"AI service error: {exc}")
